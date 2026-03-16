@@ -1,27 +1,49 @@
 package com.trading.platform.margin.service;
 
-import com.trading.platform.margin.entity.MarginAccount;
-import com.trading.platform.margin.repository.MarginAccountRepository;
 import com.trading.platform.user.entity.User;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 @Service
-@RequiredArgsConstructor
 public class MarginService {
 
-    private final MarginAccountRepository marginAccountRepository;
-
-    public BigDecimal getTradingPower(User user) {
-        MarginAccount account = marginAccountRepository.findByUser(user)
-                .orElseThrow(() -> new RuntimeException("Margin account not found"));
-        BigDecimal available = account.getAvailableMargin() == null ? BigDecimal.ZERO : account.getAvailableMargin();
-        Integer multiplier = account.getMarginMultiplier() == null ? 1 : account.getMarginMultiplier();
-        return available.multiply(BigDecimal.valueOf(multiplier));
+    public BigDecimal totalBuyingPower(User user) {
+        return user.getBalance().multiply(user.getMarginMultiplier());
     }
 
-    public boolean hasEnoughMargin(User user, BigDecimal requiredAmount) {
-        return getTradingPower(user).compareTo(requiredAmount) >= 0;
+    public BigDecimal availableMargin(User user) {
+        return totalBuyingPower(user).subtract(user.getUsedMargin());
+    }
+
+    public BigDecimal requiredMargin(BigDecimal orderValue, BigDecimal multiplier) {
+        return orderValue.divide(multiplier, 8, RoundingMode.HALF_UP);
+    }
+
+    public boolean hasEnoughMargin(User user, BigDecimal orderValue) {
+
+        BigDecimal required = requiredMargin(orderValue, user.getMarginMultiplier());
+        BigDecimal available = availableMargin(user);
+
+        return available.compareTo(required) >= 0;
+    }
+
+    public void blockMargin(User user, BigDecimal orderValue) {
+
+        BigDecimal required = requiredMargin(orderValue, user.getMarginMultiplier());
+
+        user.setUsedMargin(
+                user.getUsedMargin().add(required)
+        );
+    }
+
+    public void releaseMargin(User user, BigDecimal orderValue) {
+
+        BigDecimal release = requiredMargin(orderValue, user.getMarginMultiplier());
+
+        user.setUsedMargin(
+                user.getUsedMargin().subtract(release)
+        );
     }
 }

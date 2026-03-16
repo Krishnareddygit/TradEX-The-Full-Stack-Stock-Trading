@@ -44,7 +44,7 @@ public class User {
     @PrePersist
     public void prePersist() {
         this.createdAt = LocalDateTime.now();
-        if (balance == null) balance = BigDecimal.valueOf(100000);
+        if (balance == null) balance = BigDecimal.valueOf(0);
         if (marginMultiplier == null) marginMultiplier = BigDecimal.valueOf(5);
         if (usedMargin == null) usedMargin = BigDecimal.ZERO;
     }
