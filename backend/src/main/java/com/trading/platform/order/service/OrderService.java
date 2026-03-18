@@ -16,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.trading.platform.trade.entity.Trade;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -36,6 +37,7 @@ public class OrderService {
     @Transactional
     public Order placeOrder(String username, OrderRequest request) {
 
+        // 🔹 Fetch user
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
@@ -43,63 +45,123 @@ public class OrderService {
             throw new RuntimeException("Trading is paused for this user");
         }
 
+        // 🔹 Fetch stock
         Stock stock = stockRepository.findBySymbol(request.getSymbol())
                 .orElseThrow(() -> new RuntimeException("Stock not found: " + request.getSymbol()));
 
-        if (!stock.isTradable())
+        if (!stock.isTradable()) {
             throw new RuntimeException("Trading is disabled for " + request.getSymbol());
+        }
 
+        // 🔹 Parse enums
         OrderSide side = OrderSide.valueOf(request.getSide().toUpperCase());
         OrderType type = OrderType.valueOf(request.getType().toUpperCase());
-        BigDecimal price = (type == OrderType.MARKET) ? stock.getPrice() : request.getPrice();
+
+        BigDecimal price = (type == OrderType.MARKET)
+                ? stock.getPrice()
+                : request.getPrice();
+
         Long quantity = request.getQuantity();
 
+        // ============================
+        // 🔥 BUY LOGIC (WITH MARGIN)
+        // ============================
         if (side == OrderSide.BUY) {
+
             BigDecimal totalCost = price.multiply(BigDecimal.valueOf(quantity));
-            if (user.getBalance().compareTo(totalCost) < 0)
-                throw new RuntimeException("Insufficient balance. Need ₹"
-                        + totalCost + " but have ₹" + user.getBalance());
-        }
 
-        if (side == OrderSide.SELL) {
-            // Check user actually holds enough shares
-            boolean hasShares = false;
-            var portfolio = user.getId() != null
-                    ? tradeService.getPortfolioQuantity(user, stock)
-                    : 0L;
-            if (portfolio < quantity)
-                throw new RuntimeException("Insufficient shares. You hold "
-                        + portfolio + " shares of " + stock.getSymbol());
-        }
+            boolean useMargin = request.getUseMargin() != null && request.getUseMargin();
 
-        // ---------------------------------------------------------------
-        // INSTANT EXECUTION: For a simulation platform, every order
-        // executes immediately against the market (system as counterparty).
-        // This ensures balance, portfolio, notifications all update instantly.
-        // ---------------------------------------------------------------
-        if (side == OrderSide.BUY) {
-            // System sells to user
             User systemSeller = getSystemAccount();
-            tradeService.executeTrade(user, systemSeller, stock, quantity, price);
-        } else {
-            // System buys from user
-            User systemBuyer = getSystemAccount();
-            tradeService.executeTrade(systemBuyer, user, stock, quantity, price);
+
+            if (!useMargin) {
+                // ✅ NORMAL BUY (STRICT CHECK)
+
+                if (user.getBalance().compareTo(totalCost) < 0) {
+                    throw new RuntimeException("Insufficient balance. Need ₹" + totalCost);
+                }
+
+                // 🚫 NO margin here
+                tradeService.executeTrade(user, systemSeller, stock, quantity, price);
+
+            } else {
+                // 🔥 MARGIN BUY
+
+                int marginPercent = 5;
+
+                BigDecimal investedAmount = totalCost
+                        .multiply(BigDecimal.valueOf(marginPercent))
+                        .divide(BigDecimal.valueOf(100));
+
+                BigDecimal borrowedAmount = totalCost.subtract(investedAmount);
+
+                if (user.getBalance().compareTo(investedAmount) < 0) {
+                    throw new RuntimeException("Insufficient margin. Need ₹" + investedAmount);
+                }
+
+                int multiplier = 100 / marginPercent;
+
+                tradeService.executeTradeWithMargin(
+                        user,
+                        systemSeller,
+                        stock,
+                        quantity,
+                        price,
+                        multiplier,
+                        investedAmount,
+                        borrowedAmount
+                );
+            }
         }
 
-        // Also save the order record for history
+        // ============================
+        // 🔥 SELL LOGIC
+        // ============================
+        if (side == OrderSide.SELL) {
+
+            Long portfolioQty = tradeService.getPortfolioQuantity(user, stock);
+
+            if (portfolioQty < quantity)
+                throw new RuntimeException("Insufficient shares");
+
+            User systemBuyer = getSystemAccount();
+
+            // 🔥 CHECK FOR MARGIN TRADE
+            Trade trade = tradeService.getLatestTrade(user, stock);
+
+            if (trade != null && trade.isMarginTrade() && !trade.isAutoSold()) {
+
+                tradeService.sellWithMargin(user, stock, quantity, price, trade);
+
+            } else {
+
+                tradeService.executeTrade(systemBuyer, user, stock, quantity, price);
+            }
+        }
+
+        // ============================
+        // 🔥 SAVE ORDER
+        // ============================
         Order order = Order.builder()
-                .user(user).stock(stock).side(side).type(type)
-                .price(price).quantity(quantity)
+                .user(user)
+                .stock(stock)
+                .side(side)
+                .type(type)
+                .price(price)
+                .quantity(quantity)
                 .remainingQuantity(0L)
                 .status(OrderStatus.FILLED)
                 .build();
+
         orderRepository.save(order);
 
-        // Still add to order book for limit order matching between real users
+        // ============================
+        // 🔥 ORDER BOOK (LIMIT ORDERS)
+        // ============================
         if (type == OrderType.LIMIT) {
             OrderBook orderBook = orderBookManager.getOrderBook(stock.getSymbol());
             ReentrantLock lock = orderBook.getLock();
+
             lock.lock();
             try {
                 orderBook.addOrder(order);
@@ -115,6 +177,7 @@ public class OrderService {
         return order;
     }
 
+    // 🔹 SYSTEM ACCOUNT (MARKET MAKER)
     private User getSystemAccount() {
         return userRepository.findByUsername("system")
                 .orElseGet(() -> {
@@ -128,6 +191,7 @@ public class OrderService {
                 });
     }
 
+    // 🔹 FETCH USER ORDERS
     public List<Order> getOrdersForUser(String username) {
         User user = userRepository.findByUsername(username).orElseThrow();
         return orderRepository.findByUserIdOrderByCreatedAtDesc(user.getId());

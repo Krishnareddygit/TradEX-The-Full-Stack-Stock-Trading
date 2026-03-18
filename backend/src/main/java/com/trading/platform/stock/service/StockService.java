@@ -5,6 +5,8 @@ import com.trading.platform.stock.entity.Stock;
 import com.trading.platform.stock.repository.StockRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
 import java.util.List;
 
 @Service
@@ -47,4 +49,11 @@ public class StockService {
     public Stock getStockBySymbol(String symbol) {
         return stockRepository.findBySymbol(symbol).orElseThrow();
     }
+
+    public BigDecimal getLivePrice(String symbol) {
+        return stockRepository.findBySymbol(symbol)
+                .orElseThrow()
+                .getPrice();
+    }
+
 }

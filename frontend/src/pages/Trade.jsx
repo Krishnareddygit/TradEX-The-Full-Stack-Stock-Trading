@@ -225,69 +225,174 @@ export default function Trade() {
 
         {/* Order Panel */}
         <div className="order-panel card">
-          <div className="card-header"><span className="card-title">Place Order</span></div>
+  <div className="card-header">
+    <span className="card-title">Place Order</span>
+  </div>
 
-          <div className="balance-display">
-            <span className="muted" style={{ fontSize: 12 }}>Available Balance</span>
-            <span className="mono" style={{ color: 'var(--accent)', fontWeight: 700 }}>
-              ₹{Number(user?.balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-            </span>
-          </div>
+  {/* BALANCE */}
+  <div className="balance-display">
+    <span className="muted" style={{ fontSize: 12 }}>Available Balance</span>
+    <span className="mono" style={{ color: 'var(--accent)', fontWeight: 700 }}>
+      ₹{Number(user?.balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+    </span>
 
-          <div className="side-toggle">
-            <button className={`side-btn ${form.side === 'BUY' ? 'buy-active' : ''}`}
-              onClick={() => setForm(p => ({ ...p, side: 'BUY' }))}>BUY</button>
-            <button className={`side-btn ${form.side === 'SELL' ? 'sell-active' : ''}`}
-              onClick={() => setForm(p => ({ ...p, side: 'SELL' }))}>SELL</button>
-          </div>
-
-          <div className="form-group">
-            <label>Order Type</label>
-            <select value={form.type} onChange={e => setForm(p => ({ ...p, type: e.target.value }))}>
-              <option value="MARKET">Market Order</option>
-              <option value="LIMIT">Limit Order</option>
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label>Quantity</label>
-            <input type="number" min="1" placeholder="Number of shares" value={form.quantity}
-              onChange={e => setForm(p => ({ ...p, quantity: e.target.value }))} />
-          </div>
-
-          {form.type === 'LIMIT' && (
-            <div className="form-group">
-              <label>Limit Price (₹)</label>
-              <input type="number" min="0.01" step="0.01" placeholder="Price per share" value={form.price}
-                onChange={e => setForm(p => ({ ...p, price: e.target.value }))} />
-            </div>
-          )}
-
-          {selected && form.quantity && (
-            <div className="order-estimate">
-              <span className="muted" style={{ fontSize: 12 }}>Estimated Value</span>
-              <span className="mono" style={{ fontWeight: 700 }}>
-                ₹{(Number(form.type === 'LIMIT' && form.price ? form.price : selected?.price || 0) * Number(form.quantity || 0))
-                  .toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-              </span>
-            </div>
-          )}
-
-          <button
-            className={form.side === 'BUY' ? 'btn-buy' : 'btn-sell'}
-            onClick={handlePlaceOrder}
-            disabled={placing || !selected || !selected.tradable}
-            style={{ marginTop: 8, opacity: (placing || !selected || !selected.tradable) ? 0.6 : 1, cursor: (placing || !selected || !selected.tradable) ? 'not-allowed' : 'pointer' }}
-          >
-            {placing ? 'Placing...' : `${form.side} ${selected?.symbol || ''}`}
-          </button>
-
-          {selected && !selected.tradable && (
-            <p style={{ fontSize: 12, color: 'var(--red)', textAlign: 'center', marginTop: 8 }}>
-              Trading halted for this stock
-            </p>
-          )}
+    {/* 🔥 Buying Power (only if margin ON) */}
+    {form.useMargin && (
+      <div style={{ marginTop: 6 }}>
+        <span className="muted" style={{ fontSize: 12 }}>Buying Power</span>
+        <div className="mono" style={{ fontWeight: 700 }}>
+          ₹{Number((user?.balance || 0) * 20).toLocaleString('en-IN')} (20x)
         </div>
+      </div>
+    )}
+  </div>
+
+  {/* BUY / SELL */}
+  <div className="side-toggle">
+    <button className={`side-btn ${form.side === 'BUY' ? 'buy-active' : ''}`}
+      onClick={() => setForm(p => ({ ...p, side: 'BUY' }))}>
+      BUY
+    </button>
+    <button className={`side-btn ${form.side === 'SELL' ? 'sell-active' : ''}`}
+      onClick={() => setForm(p => ({ ...p, side: 'SELL' }))}>
+      SELL
+    </button>
+  </div>
+
+  {/* ORDER TYPE */}
+  <div className="form-group">
+    <label>Order Type</label>
+    <select value={form.type} onChange={e => setForm(p => ({ ...p, type: e.target.value }))}>
+      <option value="MARKET">Market Order</option>
+      <option value="LIMIT">Limit Order</option>
+    </select>
+  </div>
+
+  {/* 🔥 MARGIN TOGGLE (NEW CLEAN UI) */}
+  <div className="form-group">
+    <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <span>Margin Trading</span>
+
+      <div
+        onClick={() => setForm(p => ({ ...p, useMargin: !p.useMargin }))}
+        style={{
+          width: 40,
+          height: 20,
+          background: form.useMargin ? 'var(--green)' : 'var(--border)',
+          borderRadius: 20,
+          position: 'relative',
+          cursor: 'pointer',
+          transition: '0.2s'
+        }}
+      >
+        <div
+          style={{
+            width: 16,
+            height: 16,
+            background: '#fff',
+            borderRadius: '50%',
+            position: 'absolute',
+            top: 2,
+            left: form.useMargin ? 22 : 2,
+            transition: '0.2s'
+          }}
+        />
+      </div>
+    </label>
+
+    <span className="muted" style={{ fontSize: 11 }}>
+      {form.useMargin ? "Using 5% margin (20x leverage)" : "Normal trade (no leverage)"}
+    </span>
+  </div>
+
+  {/* QUANTITY */}
+  <div className="form-group">
+    <label>Quantity</label>
+    <input type="number" min="1" placeholder="Number of shares"
+      value={form.quantity}
+      onChange={e => setForm(p => ({ ...p, quantity: e.target.value }))} />
+  </div>
+
+  {/* LIMIT PRICE */}
+  {form.type === 'LIMIT' && (
+    <div className="form-group">
+      <label>Limit Price (₹)</label>
+      <input type="number" min="0.01" step="0.01"
+        placeholder="Price per share"
+        value={form.price}
+        onChange={e => setForm(p => ({ ...p, price: e.target.value }))} />
+    </div>
+  )}
+
+  {/* 🔥 ESTIMATION */}
+  {selected && form.quantity && (() => {
+
+    const price = Number(form.type === 'LIMIT' && form.price ? form.price : selected?.price || 0)
+    const qty = Number(form.quantity || 0)
+    const total = price * qty
+    const required = form.useMargin ? total * 0.05 : total
+
+    return (
+      <div className="order-estimate">
+
+        <div>
+          <span className="muted" style={{ fontSize: 12 }}>Estimated Value</span>
+          <div className="mono" style={{ fontWeight: 700 }}>
+            ₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 6 }}>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {form.useMargin ? "Required Margin (5%)" : "Required Amount"}
+          </span>
+
+          <div
+            className="mono"
+            style={{
+              fontWeight: 700,
+              color: form.useMargin ? 'var(--green)' : 'var(--accent)'
+            }}
+          >
+            ₹{required.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+          </div>
+        </div>
+
+      </div>
+    )
+
+  })()}
+
+  {/* BUTTON */}
+  <button
+    className={form.side === 'BUY' ? 'btn-buy' : 'btn-sell'}
+    onClick={handlePlaceOrder}
+    disabled={
+      placing ||
+      !selected ||
+      !selected.tradable ||
+      (form.side === "BUY" && (
+        (form.useMargin
+          ? (Number(form.quantity || 0) * (Number(form.price || selected?.price || 0)) * 0.05)
+          : (Number(form.quantity || 0) * (Number(form.price || selected?.price || 0)))
+        ) > user?.balance
+      ))
+    }
+    style={{
+      marginTop: 8,
+      opacity: (placing || !selected || !selected.tradable) ? 0.6 : 1,
+      cursor: (placing || !selected || !selected.tradable) ? 'not-allowed' : 'pointer'
+    }}
+  >
+    {placing ? 'Placing...' : `${form.side} ${selected?.symbol || ''}`}
+  </button>
+
+  {selected && !selected.tradable && (
+    <p style={{ fontSize: 12, color: 'var(--red)', textAlign: 'center', marginTop: 8 }}>
+      Trading halted for this stock
+    </p>
+  )}
+</div>
       </div>
     </div>
   )
