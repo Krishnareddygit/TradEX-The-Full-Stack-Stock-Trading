@@ -33,7 +33,13 @@ export default function Trade() {
   const [sellOrders, setSellOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [placing, setPlacing] = useState(false)
-  const [form, setForm] = useState({ side: 'BUY', type: 'MARKET', quantity: '', price: '' })
+  const [form, setForm] = useState({
+    side: 'BUY',
+    type: 'MARKET',
+    quantity: '',
+    price: '',
+    useMargin: false 
+  })
 
   useEffect(() => {
     getStocks().then(r => {
@@ -86,7 +92,8 @@ export default function Trade() {
         side: form.side,
         type: form.type,
         quantity: Number(form.quantity),
-        price: form.type === 'LIMIT' ? Number(form.price) : null
+        price: form.type === 'LIMIT' ? Number(form.price) : null,
+        useMargin: form.side === "BUY" ? form.useMargin : false
       })
       toast.success(`${form.side} order placed — ${form.quantity} × ${selected.symbol}`)
       setForm(p => ({ ...p, quantity: '', price: '' }))
@@ -237,7 +244,7 @@ export default function Trade() {
     </span>
 
     {/* 🔥 Buying Power (only if margin ON) */}
-    {form.useMargin && (
+    {form.side === "BUY" && form.useMargin && (
       <div style={{ marginTop: 6 }}>
         <span className="muted" style={{ fontSize: 12 }}>Buying Power</span>
         <div className="mono" style={{ fontWeight: 700 }}>
@@ -254,7 +261,7 @@ export default function Trade() {
       BUY
     </button>
     <button className={`side-btn ${form.side === 'SELL' ? 'sell-active' : ''}`}
-      onClick={() => setForm(p => ({ ...p, side: 'SELL' }))}>
+      onClick={() => setForm(p => ({ ...p, side: 'SELL', useMargin: false }))}>
       SELL
     </button>
   </div>
@@ -269,6 +276,7 @@ export default function Trade() {
   </div>
 
   {/* 🔥 MARGIN TOGGLE (NEW CLEAN UI) */}
+  {form.side === "BUY" && (
   <div className="form-group">
     <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
       <span>Margin Trading</span>
@@ -281,8 +289,7 @@ export default function Trade() {
           background: form.useMargin ? 'var(--green)' : 'var(--border)',
           borderRadius: 20,
           position: 'relative',
-          cursor: 'pointer',
-          transition: '0.2s'
+          cursor: 'pointer'
         }}
       >
         <div
@@ -293,17 +300,17 @@ export default function Trade() {
             borderRadius: '50%',
             position: 'absolute',
             top: 2,
-            left: form.useMargin ? 22 : 2,
-            transition: '0.2s'
+            left: form.useMargin ? 22 : 2
           }}
         />
       </div>
     </label>
 
     <span className="muted" style={{ fontSize: 11 }}>
-      {form.useMargin ? "Using 5% margin (20x leverage)" : "Normal trade (no leverage)"}
+      {form.useMargin ? "Using 5% margin (20x)" : "Normal trade"}
     </span>
   </div>
+)}
 
   {/* QUANTITY */}
   <div className="form-group">
@@ -330,7 +337,9 @@ export default function Trade() {
     const price = Number(form.type === 'LIMIT' && form.price ? form.price : selected?.price || 0)
     const qty = Number(form.quantity || 0)
     const total = price * qty
-    const required = form.useMargin ? total * 0.05 : total
+    const required = form.side === "BUY"
+  ? (form.useMargin ? total * 0.05 : total)
+  : 0
 
     return (
       <div className="order-estimate">

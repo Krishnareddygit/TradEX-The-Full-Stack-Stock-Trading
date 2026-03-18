@@ -9,6 +9,7 @@ import com.trading.platform.order.model.*;
 import com.trading.platform.order.repository.OrderRepository;
 import com.trading.platform.stock.entity.Stock;
 import com.trading.platform.stock.repository.StockRepository;
+import com.trading.platform.trade.entity.Trade;
 import com.trading.platform.trade.service.TradeService;
 import com.trading.platform.user.entity.User;
 import com.trading.platform.user.repository.UserRepository;
@@ -16,7 +17,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import com.trading.platform.trade.entity.Trade;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -27,33 +27,30 @@ import java.util.concurrent.locks.ReentrantLock;
 @RequiredArgsConstructor
 public class OrderService {
 
-    private final OrderRepository  orderRepository;
+    private final OrderRepository orderRepository;
     private final OrderBookManager orderBookManager;
-    private final MatchingEngine   matchingEngine;
-    private final StockRepository  stockRepository;
-    private final UserRepository   userRepository;
-    private final TradeService     tradeService;
+    private final MatchingEngine matchingEngine;
+    private final StockRepository stockRepository;
+    private final UserRepository userRepository;
+    private final TradeService tradeService;
 
     @Transactional
     public Order placeOrder(String username, OrderRequest request) {
 
-        // 🔹 Fetch user
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
         if (!user.isTradingEnabled()) {
-            throw new RuntimeException("Trading is paused for this user");
+            throw new RuntimeException("Trading is paused");
         }
 
-        // 🔹 Fetch stock
         Stock stock = stockRepository.findBySymbol(request.getSymbol())
-                .orElseThrow(() -> new RuntimeException("Stock not found: " + request.getSymbol()));
+                .orElseThrow(() -> new RuntimeException("Stock not found"));
 
         if (!stock.isTradable()) {
-            throw new RuntimeException("Trading is disabled for " + request.getSymbol());
+            throw new RuntimeException("Stock not tradable");
         }
 
-        // 🔹 Parse enums
         OrderSide side = OrderSide.valueOf(request.getSide().toUpperCase());
         OrderType type = OrderType.valueOf(request.getType().toUpperCase());
 
@@ -62,31 +59,24 @@ public class OrderService {
                 : request.getPrice();
 
         Long quantity = request.getQuantity();
+        BigDecimal totalCost = price.multiply(BigDecimal.valueOf(quantity));
 
-        // ============================
-        // 🔥 BUY LOGIC (WITH MARGIN)
-        // ============================
+        // 🔥 FIXED
+        boolean useMargin = Boolean.TRUE.equals(request.getUseMargin());
+
+        // ================= BUY =================
         if (side == OrderSide.BUY) {
-
-            BigDecimal totalCost = price.multiply(BigDecimal.valueOf(quantity));
-
-            boolean useMargin = request.getUseMargin() != null && request.getUseMargin();
 
             User systemSeller = getSystemAccount();
 
             if (!useMargin) {
-                // ✅ NORMAL BUY (STRICT CHECK)
-
                 if (user.getBalance().compareTo(totalCost) < 0) {
-                    throw new RuntimeException("Insufficient balance. Need ₹" + totalCost);
+                    throw new RuntimeException("Insufficient balance");
                 }
 
-                // 🚫 NO margin here
                 tradeService.executeTrade(user, systemSeller, stock, quantity, price);
 
             } else {
-                // 🔥 MARGIN BUY
-
                 int marginPercent = 5;
 
                 BigDecimal investedAmount = totalCost
@@ -94,12 +84,11 @@ public class OrderService {
                         .divide(BigDecimal.valueOf(100));
 
                 BigDecimal borrowedAmount = totalCost.subtract(investedAmount);
+                int multiplier = 100 / marginPercent;
 
                 if (user.getBalance().compareTo(investedAmount) < 0) {
-                    throw new RuntimeException("Insufficient margin. Need ₹" + investedAmount);
+                    throw new RuntimeException("Insufficient margin funds");
                 }
-
-                int multiplier = 100 / marginPercent;
 
                 tradeService.executeTradeWithMargin(
                         user,
@@ -114,9 +103,7 @@ public class OrderService {
             }
         }
 
-        // ============================
-        // 🔥 SELL LOGIC
-        // ============================
+        // ================= SELL =================
         if (side == OrderSide.SELL) {
 
             Long portfolioQty = tradeService.getPortfolioQuantity(user, stock);
@@ -126,22 +113,15 @@ public class OrderService {
 
             User systemBuyer = getSystemAccount();
 
-            // 🔥 CHECK FOR MARGIN TRADE
-            Trade trade = tradeService.getLatestTrade(user, stock);
+            Trade marginTrade = tradeService.getActiveMarginTrade(user, stock);
 
-            if (trade != null && trade.isMarginTrade() && !trade.isAutoSold()) {
-
-                tradeService.sellWithMargin(user, stock, quantity, price, trade);
-
+            if (marginTrade != null) {
+                tradeService.sellWithMargin(user, stock, quantity, price, marginTrade);
             } else {
-
                 tradeService.executeTrade(systemBuyer, user, stock, quantity, price);
             }
         }
 
-        // ============================
-        // 🔥 SAVE ORDER
-        // ============================
         Order order = Order.builder()
                 .user(user)
                 .stock(stock)
@@ -155,9 +135,7 @@ public class OrderService {
 
         orderRepository.save(order);
 
-        // ============================
-        // 🔥 ORDER BOOK (LIMIT ORDERS)
-        // ============================
+        // OPTIONAL ORDER BOOK
         if (type == OrderType.LIMIT) {
             OrderBook orderBook = orderBookManager.getOrderBook(stock.getSymbol());
             ReentrantLock lock = orderBook.getLock();
@@ -171,13 +149,9 @@ public class OrderService {
             }
         }
 
-        log.info("[OrderService] {} {} x {} @ ₹{} executed for {}",
-                side, quantity, stock.getSymbol(), price, username);
-
         return order;
     }
 
-    // 🔹 SYSTEM ACCOUNT (MARKET MAKER)
     private User getSystemAccount() {
         return userRepository.findByUsername("system")
                 .orElseGet(() -> {
@@ -191,7 +165,6 @@ public class OrderService {
                 });
     }
 
-    // 🔹 FETCH USER ORDERS
     public List<Order> getOrdersForUser(String username) {
         User user = userRepository.findByUsername(username).orElseThrow();
         return orderRepository.findByUserIdOrderByCreatedAtDesc(user.getId());

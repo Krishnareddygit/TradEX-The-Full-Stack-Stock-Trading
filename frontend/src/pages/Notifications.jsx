@@ -112,7 +112,11 @@ Mark All Read
 
 {notifications.map(n=>{
 
-const isBuy = n.message?.toLowerCase().includes("bought")
+const msg = n.message?.toLowerCase() || ""
+
+const isBuy =
+  msg.includes("bought") ||
+  msg.includes("margin buy")
 
 return(
 
