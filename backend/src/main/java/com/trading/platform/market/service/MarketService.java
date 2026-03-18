@@ -11,7 +11,7 @@ import java.time.LocalTime;
 public class MarketService {
 
     private final LocalTime marketOpen = LocalTime.of(9, 15);
-    private final LocalTime marketClose = LocalTime.of(19, 30);
+    private final LocalTime marketClose = LocalTime.of(15, 30);
 
     public boolean isMarketOpen() {
 

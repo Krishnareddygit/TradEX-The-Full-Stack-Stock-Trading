@@ -1,49 +1,56 @@
 package com.trading.platform.margin.service;
 
+import com.trading.platform.trade.entity.Trade;
+import com.trading.platform.trade.repository.TradeRepository;
 import com.trading.platform.user.entity.User;
+import com.trading.platform.user.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 
 @Service
+@RequiredArgsConstructor
 public class MarginService {
 
-    public BigDecimal totalBuyingPower(User user) {
-        return user.getBalance().multiply(user.getMarginMultiplier());
+    private final TradeRepository tradeRepository;
+    private final UserRepository userRepository;
+
+    public void checkAndLiquidate(Trade trade, BigDecimal currentPrice) {
+
+        if (!trade.isMarginTrade() || trade.isAutoSold()) return;
+
+        BigDecimal currentValue = currentPrice
+                .multiply(BigDecimal.valueOf(trade.getQuantity()));
+
+        BigDecimal originalValue = trade.getPrice()
+                .multiply(BigDecimal.valueOf(trade.getQuantity()));
+
+        BigDecimal loss = originalValue.subtract(currentValue);
+
+        if (loss.compareTo(trade.getBorrowedAmount()) >= 0) {
+            autoSell(trade, currentPrice);
+        }
     }
 
-    public BigDecimal availableMargin(User user) {
-        return totalBuyingPower(user).subtract(user.getUsedMargin());
-    }
+    private void autoSell(Trade trade, BigDecimal currentPrice) {
 
-    public BigDecimal requiredMargin(BigDecimal orderValue, BigDecimal multiplier) {
-        return orderValue.divide(multiplier, 8, RoundingMode.HALF_UP);
-    }
+        User user = trade.getBuyer();
 
-    public boolean hasEnoughMargin(User user, BigDecimal orderValue) {
+        BigDecimal sellValue = currentPrice
+                .multiply(BigDecimal.valueOf(trade.getQuantity()));
 
-        BigDecimal required = requiredMargin(orderValue, user.getMarginMultiplier());
-        BigDecimal available = availableMargin(user);
+        BigDecimal remaining = sellValue.subtract(trade.getBorrowedAmount());
 
-        return available.compareTo(required) >= 0;
-    }
+        if (remaining.compareTo(BigDecimal.ZERO) > 0) {
+            user.setBalance(user.getBalance().add(remaining));
+        }
 
-    public void blockMargin(User user, BigDecimal orderValue) {
+        trade.setAutoSold(true);
 
-        BigDecimal required = requiredMargin(orderValue, user.getMarginMultiplier());
+        userRepository.save(user);
+        tradeRepository.save(trade);
 
-        user.setUsedMargin(
-                user.getUsedMargin().add(required)
-        );
-    }
-
-    public void releaseMargin(User user, BigDecimal orderValue) {
-
-        BigDecimal release = requiredMargin(orderValue, user.getMarginMultiplier());
-
-        user.setUsedMargin(
-                user.getUsedMargin().subtract(release)
-        );
+        System.out.println("🚨 AUTO SELL: Trade " + trade.getId());
     }
 }
