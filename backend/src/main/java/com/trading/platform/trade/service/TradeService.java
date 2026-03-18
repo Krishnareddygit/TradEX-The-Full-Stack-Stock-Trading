@@ -29,9 +29,7 @@ public class TradeService {
     private final UserRepository userRepository;
     private final NotificationService notificationService;
 
-    // ============================
-    // NORMAL TRADE
-    // ============================
+    // ================= NORMAL TRADE =================
     @Transactional
     public void executeTrade(User buyer, User seller, Stock stock,
                              Long quantity, BigDecimal price) {
@@ -51,27 +49,28 @@ public class TradeService {
 
         tradeRepository.save(trade);
 
-        User freshBuyer = userRepository.findById(buyer.getId()).orElse(buyer);
-        User freshSeller = userRepository.findById(seller.getId()).orElse(seller);
+        buyer.setBalance(buyer.getBalance().subtract(totalPrice));
+        seller.setBalance(seller.getBalance().add(totalPrice));
 
-        freshBuyer.setBalance(freshBuyer.getBalance().subtract(totalPrice));
-        freshSeller.setBalance(freshSeller.getBalance().add(totalPrice));
+        userRepository.save(buyer);
+        userRepository.save(seller);
 
-        userRepository.save(freshBuyer);
-        userRepository.save(freshSeller);
+        portfolioService.addStock(buyer, stock, quantity);
 
-        portfolioService.addStock(freshBuyer, stock, quantity);
+        notificationService.createNotification(buyer,
+                "✅ Bought " + quantity + " shares of " + stock.getSymbol() +
+                        " @ ₹" + price);
 
-        if (!"system".equals(freshSeller.getUsername())) {
-            portfolioService.removeStock(freshSeller, stock, quantity);
+        if (!"system".equals(seller.getUsername())) {
+            portfolioService.removeStock(seller, stock, quantity);
+
+            notificationService.createNotification(seller,
+                    "💰 Sold " + quantity + " shares of " + stock.getSymbol() +
+                            " @ ₹" + price);
         }
-
-        log.info("[TradeService] Normal trade executed");
     }
 
-    // ============================
-    // MARGIN BUY
-    // ============================
+    // ================= MARGIN BUY =================
     @Transactional
     public void executeTradeWithMargin(User buyer,
                                        User seller,
@@ -108,21 +107,19 @@ public class TradeService {
 
         portfolioService.addStock(buyer, stock, quantity);
 
-        log.info("[TradeService] Margin BUY executed");
+        notificationService.createNotification(buyer,
+                "⚡ Margin BUY: " + quantity + " shares of " + stock.getSymbol() +
+                        " @ ₹" + price + " (x" + multiplier + ")");
     }
 
-    // ============================
-    // 🔥 GET LATEST TRADE
-    // ============================
-    public Trade getLatestTrade(User user, Stock stock) {
+    // ================= ACTIVE MARGIN =================
+    public Trade getActiveMarginTrade(User user, Stock stock) {
         return tradeRepository
-                .findTopByBuyerAndStockOrderByExecutedAtDesc(user, stock)
+                .findTopByBuyerAndStockAndMarginTradeTrueAndAutoSoldFalseOrderByExecutedAtDesc(user, stock)
                 .orElse(null);
     }
 
-    // ============================
-    // 🔥 FINAL MARGIN SELL (CORRECT)
-    // ============================
+    // ================= MARGIN SELL =================
     @Transactional
     public void sellWithMargin(User user,
                                Stock stock,
@@ -131,35 +128,48 @@ public class TradeService {
                                Trade trade) {
 
         BigDecimal sellValue = price.multiply(BigDecimal.valueOf(quantity));
-
         BigDecimal borrowed = trade.getBorrowedAmount();
-        BigDecimal invested = trade.getInvestedAmount();
 
         BigDecimal remaining = sellValue.subtract(borrowed);
 
         if (remaining.compareTo(BigDecimal.ZERO) > 0) {
-            // ✅ PROFIT CASE
             user.setBalance(user.getBalance().add(remaining));
-        } else {
-            // ❌ LOSS CASE
-            // user already lost invested amount
-            // no additional deduction needed
         }
 
-        trade.setAutoSold(true);
+        // PARTIAL SELL FIX
+        if (quantity.equals(trade.getQuantity())) {
+            trade.setAutoSold(true);
+        } else {
+            trade.setQuantity(trade.getQuantity() - quantity);
+        }
 
         userRepository.save(user);
         tradeRepository.save(trade);
 
         portfolioService.removeStock(user, stock, quantity);
 
+        // 🔥 CREATE SELL TRADE
+        Trade sellTrade = Trade.builder()
+                .buyer(getSystemAccount())
+                .seller(user)
+                .stock(stock)
+                .quantity(quantity)
+                .price(price)
+                .executedAt(LocalDateTime.now())
+                .marginTrade(true)
+                .autoSold(true)
+                .build();
+
+        tradeRepository.save(sellTrade);
+
         notificationService.createNotification(user,
                 "📉 Margin position closed for " + stock.getSymbol());
-
-        log.info("[TradeService] Margin SELL executed");
     }
 
-    // ============================
+    private User getSystemAccount() {
+        return userRepository.findByUsername("system").orElseThrow();
+    }
+
     public List<Trade> getTradesForUser(Long userId) {
         return tradeRepository.findByBuyerIdOrSellerIdOrderByExecutedAtDesc(userId, userId);
     }

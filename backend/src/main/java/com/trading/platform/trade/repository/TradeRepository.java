@@ -19,4 +19,6 @@ public interface TradeRepository extends JpaRepository<Trade, Long> {
     void deleteByUserId(@Param("userId") Long userId);
 
     Optional<Trade> findTopByBuyerAndStockOrderByExecutedAtDesc(User buyer, Stock stock);
+
+    Optional<Trade> findTopByBuyerAndStockAndMarginTradeTrueAndAutoSoldFalseOrderByExecutedAtDesc(User buyer, Stock stock);
 }
