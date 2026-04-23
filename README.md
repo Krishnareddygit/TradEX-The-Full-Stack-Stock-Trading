@@ -253,4 +253,4 @@ http://localhost:5173
 
 # 👨‍💻 Author
 
-**Krishna Reddy Nallamilli**
+**Nallamilli Krishna Reddy**
